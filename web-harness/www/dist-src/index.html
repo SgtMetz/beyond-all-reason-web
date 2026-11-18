@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Beyond All Reason in the browser (unofficial WebAssembly port)</title>
+<style>
+	* { box-sizing: border-box; }
+	body { font: 14px/1.45 system-ui, sans-serif; margin: 0; background: #101216; color: #dde; min-height: 100vh; }
+	main { max-width: 1320px; margin: 0 auto; padding: 16px; }
+	h1 { font-size: 20px; margin: 0 0 4px; }
+	.sub { color: #99a; margin: 0 0 14px; }
+	#stage { position: relative; width: 1280px; max-width: 100%; }
+	#canvas { display: block; background: #000; width: 1280px; height: 720px; max-width: 100%; outline: 1px solid #334; }
+	#loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; background: radial-gradient(circle at 50% 40%, #1b2230, #0b0d11); padding: 20px; text-align: center; }
+	#loading.hidden { display: none; }
+	#loading h2 { margin: 0; font-size: 26px; }
+	#bar { width: min(560px, 90%); height: 14px; border-radius: 7px; background: #232a38; overflow: hidden; }
+	#bar > div { height: 100%; width: 0; background: linear-gradient(90deg, #2d7fe0, #52c2ff); transition: width .2s; }
+	#phase, #detail { color: #aab; }
+	#loading.engine #opts, #loading.engine #play { display: none; }
+	#barlabel { font: 600 13px system-ui; color: #cde; min-height: 1.2em; }
+	#opts { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+	label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: #99a; text-align: left; }
+	select { background: #1c2230; color: #dde; border: 1px solid #334; border-radius: 4px; padding: 5px 8px; font: inherit; }
+	button#play { font: 600 16px system-ui; padding: 10px 34px; border: 0; border-radius: 6px; background: #2d7fe0; color: #fff; cursor: pointer; }
+	button#play:disabled { background: #2a3140; color: #778; cursor: default; }
+	.err { color: #f77; }
+	details { margin-top: 12px; }
+	pre { background: #0b0d11; border: 1px solid #263; padding: 6px; overflow: auto; font: 11px/1.35 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-all; max-height: 260px; }
+	dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0; }
+	dt { color: #889; } dd { margin: 0; }
+	footer { color: #778; font-size: 12px; margin-top: 12px; }
+</style>
+</head>
+<body data-gate="play">
+<main>
+<h1>Beyond All Reason in the browser</h1>
+<p class="sub">Unofficial WebAssembly/WebGL2 port of the Recoil engine. Local skirmish against one of BAR's built-in Lua AIs. Needs a recent Chrome or Edge on a desktop GPU.</p>
+<div id="stage">
+	<canvas id="canvas" width="1280" height="720" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+	<div id="loading">
+		<h2>Loading</h2>
+		<div id="bar"><div id="barfill"></div></div>
+		<div id="barlabel"></div>
+		<div id="phase">starting</div>
+		<div id="detail">The game files (about 1.2 GB) are downloaded once and kept in this browser's storage. Music and assets for other game modes (about 0.8 GB) follow in the background once the game runs.</div>
+		<div id="opts">
+			<label>Map<select id="o-map"><option>All That Glitters v2.2</option></select></label>
+			<label>Opponent<select id="o-ai"><option value="SimpleAI">SimpleAI (easy)</option><option value="SimpleDefenderAI">SimpleDefenderAI</option><option value="SimpleConstructorAI">SimpleConstructorAI</option></select></label>
+			<label>Graphics<select id="o-preset"><option value="">game default (low)</option><option>medium</option><option>high</option></select></label>
+			<label>Game speed<select id="o-speed"><option value="1">1×</option><option value="2">2×</option><option value="3">3×</option></select></label>
+		</div>
+		<button id="play" type="button" disabled>Play</button>
+		<div id="coi"></div>
+	</div>
+</div>
+<div id="loadstatus" style="margin-top:8px;color:#9cf;min-height:1.4em"></div>
+<details>
+	<summary>Status and log</summary>
+	<dl id="status">
+		<dt>cross-origin isolated</dt><dd id="s-coi"></dd>
+		<dt>content</dt><dd><progress id="s-prog" max="1" value="0"></progress> <span id="s-content"></span></dd>
+		<dt>phase</dt><dd id="s-phase">starting</dd>
+		<dt>sim frame</dt><dd id="s-frame">-</dd>
+		<dt>main-thread lag</dt><dd id="s-lag">-</dd>
+		<dt>wasm heap</dt><dd id="s-mem">-</dd>
+	</dl>
+	<p><button id="save-log" type="button">Save log</button> <button id="grab-frame" type="button">Save captured frame</button></p>
+	<pre id="key"></pre>
+	<pre id="log"></pre>
+</details>
+<footer>Controls: left-click selects, right-click orders, WASD / arrow keys and the mouse wheel move the camera. Beyond All Reason and the Recoil engine are GPL/free software by their authors; this port is not affiliated with them. Source: github.com/SgtMetz/RecoilEngine (branch wasm-port).</footer>
+</main>
+<script>
+// mirror the status fields into the loading overlay
+window.applyPlayOptions = (params) => {
+	params.set("skirmish", "1");
+	params.set("map", document.getElementById("o-map").value);
+	params.set("ai", document.getElementById("o-ai").value);
+	const preset = document.getElementById("o-preset").value;
+	if (preset) params.set("preset", preset);
+	params.set("livespeed", document.getElementById("o-speed").value);
+	params.set("testwidget", "live");
+	// stage 2: the overlay stays up with the engine's load progress (render.js)
+	const ov = document.getElementById("loading");
+	ov.classList.add("engine");
+	ov.querySelector("h2").textContent = "Starting the game";
+	document.getElementById("detail").textContent = "The first start compiles the game's shaders and takes a couple of minutes; later starts reuse them.";
+	setBar(0, "Starting the engine");
+	window.onEngineProgress = (f, step, done) => {
+		setBar(f, done ? "Ready" : step);
+		if (done) {
+			ov.classList.add("hidden");
+			document.getElementById("canvas").focus();
+		}
+	};
+};
+function setBar(f, label) {
+	document.getElementById("barfill").style.width = (Math.min(1, f) * 100).toFixed(1) + "%";
+	document.getElementById("barlabel").textContent = `${label}  ${Math.floor(Math.min(1, f) * 100)}%`;
+}
+window.onDeferredProgress = (f, done, total) => {
+	document.getElementById("loadstatus").textContent = f >= 1 ? "" :
+		`Downloading music and extra content in the background: ${(done / 1e6).toFixed(0)} / ${(total / 1e6).toFixed(0)} MB`;
+};
+new MutationObserver(() => {
+	document.getElementById("phase").textContent = document.getElementById("s-phase").textContent;
+}).observe(document.getElementById("s-phase"), { childList: true, characterData: true, subtree: true });
+const prog = document.getElementById("s-prog");
+// stage 1: content download
+const dl = setInterval(() => {
+	if (document.getElementById("loading").classList.contains("engine")) { clearInterval(dl); return; }
+	const c = document.getElementById("s-content").textContent;
+	setBar(prog.value, c ? "Downloading game files: " + c : "Checking game files");
+}, 250);
+// Firefox runs this build far slower than Chrome/Edge (under 3 fps against about 25 in the
+// same pregame, 2026-11-17), so say so before the download starts
+if (/Firefox\//.test(navigator.userAgent)) document.getElementById("coi").insertAdjacentHTML("beforebegin",
+	'<div class="err" style="max-width:560px">Firefox runs this game much slower than Chrome or Edge (a few frames per second). For playable speed, open this page in Chrome or Edge.</div>');
+if (!self.crossOriginIsolated) document.getElementById("coi").innerHTML = '<span class="err">Not cross-origin isolated: reloading to enable it…</span>';
+</script>
+<script src="coi-sw.js?register"></script>
+<script src="render.js"></script>
+</body>
+</html>

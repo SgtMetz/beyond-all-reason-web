@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recoil headless replay (WASM, browser)</title>
+<style>
+	body { font: 13px/1.4 system-ui, sans-serif; margin: 16px; background: #fafafa; color: #222; }
+	h1 { font-size: 17px; margin: 0 0 8px; }
+	#status { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; margin: 8px 0 12px; }
+	#status dt { color: #666; }
+	#status dd { margin: 0; font-variant-numeric: tabular-nums; }
+	.pass { color: #0a7a2f; font-weight: 600; }
+	.fail { color: #b00020; font-weight: 600; }
+	progress { width: 320px; }
+	pre { background: #fff; border: 1px solid #ddd; padding: 8px; overflow: auto; font: 12px/1.35 ui-monospace, Consolas, monospace; }
+	#key { max-height: 260px; }
+	#log { height: 420px; }
+	.err { color: #b00020; }
+</style>
+</head>
+<body>
+<h1>Recoil headless replay in the browser</h1>
+<div>Query options: <code>?fresh=1</code> wipes OPFS and fetches all content again; <code>?autostart=0</code> stops after loading content.</div>
+<dl id="status">
+	<dt>cross-origin isolated</dt><dd id="s-coi"></dd>
+	<dt>content</dt><dd><progress id="s-prog" max="1" value="0"></progress> <span id="s-content"></span></dd>
+	<dt>phase</dt><dd id="s-phase">starting</dd>
+	<dt>sim frame</dt><dd id="s-frame">-</dd>
+	<dt>times</dt><dd id="s-times">-</dd>
+	<dt>main-thread lag (max)</dt><dd id="s-lag">-</dd>
+	<dt>memory</dt><dd id="s-mem">-</dd>
+	<dt>result</dt><dd id="s-result">-</dd>
+</dl>
+<pre id="key"></pre>
+<pre id="log"></pre>
+<script src="harness.js"></script>
+</body>
+</html>

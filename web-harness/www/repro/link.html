@@ -1,0 +1,41 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>WebGL2 link repro</title>
+<!-- Compiles a trivial vertex shader and the fragment shader at ?fs=<file in this folder>,
+     links them and reports compile/link status, the info logs, the time taken and whether
+     the context was lost. Used to bisect shaders the browser's GL backend (ANGLE D3D11)
+     can't link. Result in window.result (JSON) and the page text. -->
+<pre id="out">running</pre>
+<script>
+window.result = null;
+(async () => {
+	const params = new URLSearchParams(location.search);
+	const fsSrc = await (await fetch(params.get("fs"), { cache: "no-store" })).text();
+	const canvas = document.createElement("canvas");
+	canvas.width = canvas.height = 16;
+	let lostEvent = false;
+	canvas.addEventListener("webglcontextlost", (e) => { lostEvent = true; e.preventDefault(); });
+	const gl = canvas.getContext("webgl2");
+	// ?vs=<file>: a real vertex shader instead of the trivial one
+	const vsSrc = params.get("vs")
+		? (await (await fetch(params.get("vs"), { cache: "no-store" })).text()).replace(/^﻿/, "")
+		: "#version 300 es\nin vec4 pos;\nvoid main() { gl_Position = pos; }\n";
+	const r = { fs: params.get("fs"), renderer: "", vsOk: false, fsOk: false, linkOk: false, fsLog: "", linkLog: "", ms: 0, lost: false };
+	const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+	r.renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+	const t0 = performance.now();
+	const vs = gl.createShader(gl.VERTEX_SHADER); gl.shaderSource(vs, vsSrc); gl.compileShader(vs);
+	const fs = gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(fs, fsSrc.replace(/^﻿/, "")); gl.compileShader(fs);
+	r.vsOk = !!gl.getShaderParameter(vs, gl.COMPILE_STATUS);
+	r.fsOk = !!gl.getShaderParameter(fs, gl.COMPILE_STATUS);
+	r.fsLog = gl.getShaderInfoLog(fs) || "";
+	const p = gl.createProgram(); gl.attachShader(p, vs); gl.attachShader(p, fs); gl.linkProgram(p);
+	r.linkOk = !!gl.getProgramParameter(p, gl.LINK_STATUS);
+	r.linkLog = gl.getProgramInfoLog(p) || "";
+	r.ms = Math.round(performance.now() - t0);
+	await new Promise((res) => setTimeout(res, 300));
+	r.lost = gl.isContextLost() || lostEvent;
+	window.result = r;
+	document.getElementById("out").textContent = JSON.stringify(r, null, 1);
+})().catch((e) => { window.result = { error: String(e) }; document.getElementById("out").textContent = String(e); });
+</script>

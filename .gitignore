@@ -1,0 +1,20 @@
+# Whitelist: this folder also holds the BAR install, the engine checkout and
+# large build/game outputs. Only the docs and harness sources are published.
+/*
+!/.gitignore
+!/README.md
+!/BAR-web-phase1-scoping.md
+!/BAR-web-phase2.md
+!/PROMPT-finish-port.md
+!/handoff-b2-glslang.md
+!/bar-web-setup-toolchain.sh
+!/prompts/
+!/m4-harness/
+!/web-harness/
+
+# Logs, replays and generated output
+*.txt
+*.sdfz
+__pycache__/
+/web-harness/dist/
+/web-harness/logs/

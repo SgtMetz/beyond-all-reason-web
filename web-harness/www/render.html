@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recoil replay with the renderer (WASM + WebGL2)</title>
+<style>
+	body { font: 13px/1.4 system-ui, sans-serif; margin: 12px; background: #16181c; color: #ddd; }
+	h1 { font-size: 16px; margin: 0 0 6px; }
+	code { color: #9cf; }
+	#wrap { display: flex; gap: 12px; align-items: flex-start; }
+	#canvas { background: #000; width: 1280px; height: 720px; flex: none; outline: 1px solid #444; }
+	#side { flex: 1; min-width: 320px; }
+	#status { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0 0 8px; }
+	#status dt { color: #999; }
+	#status dd { margin: 0; font-variant-numeric: tabular-nums; }
+	.pass { color: #5d5; font-weight: 600; }
+	.fail { color: #f66; font-weight: 600; }
+	progress { width: 200px; }
+	pre { background: #0c0d10; border: 1px solid #333; padding: 6px; overflow: auto; font: 11px/1.35 ui-monospace, Consolas, monospace; margin: 0 0 8px; white-space: pre-wrap; word-break: break-all; }
+	#key { height: 300px; }
+	#log { height: 260px; }
+</style>
+</head>
+<body>
+<h1>Recoil replay with the renderer (WASM + WebGL2)</h1>
+<div>Query options: <code>?fresh=1</code> refetch content · <code>?autostart=0</code> stop after loading content · <code>?speed=N</code> replay speed (default 1) · <code>?w=</code>/<code>?h=</code> canvas size</div>
+<div id="wrap">
+	<canvas id="canvas" width="1280" height="720" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+	<div id="side">
+		<dl id="status">
+			<dt>cross-origin isolated</dt><dd id="s-coi"></dd>
+			<dt>content</dt><dd><progress id="s-prog" max="1" value="0"></progress> <span id="s-content"></span></dd>
+			<dt>phase</dt><dd id="s-phase">starting</dd>
+			<dt>sim frame</dt><dd id="s-frame">-</dd>
+			<dt>main-thread lag</dt><dd id="s-lag">-</dd>
+			<dt>wasm heap</dt><dd id="s-mem">-</dd>
+		</dl>
+		<p><button id="save-log" type="button">Save log</button> <button id="grab-frame" type="button">Save captured frame</button></p>
+		<pre id="key"></pre>
+		<pre id="log"></pre>
+	</div>
+</div>
+<script src="render.js"></script>
+</body>
+</html>
