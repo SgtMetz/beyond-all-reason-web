@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Beyond All Reason in the browser (unofficial WebAssembly port)</title>
+<script src="config.js"></script>
 <style>
 	* { box-sizing: border-box; }
 	body { font: 14px/1.45 system-ui, sans-serif; margin: 0; background: #101216; color: #dde; min-height: 100vh; }
@@ -22,7 +23,21 @@
 	#barlabel { font: 600 13px system-ui; color: #cde; min-height: 1.2em; }
 	#opts { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
 	label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: #99a; text-align: left; }
-	select { background: #1c2230; color: #dde; border: 1px solid #334; border-radius: 4px; padding: 5px 8px; font: inherit; }
+	select, input { background: #1c2230; color: #dde; border: 1px solid #334; border-radius: 4px; padding: 5px 8px; font: inherit; }
+	#modes { display: flex; gap: 4px; }
+	#modes button, #lobby button { font: 600 13px system-ui; padding: 6px 14px; border: 1px solid #334; border-radius: 5px; background: #1c2230; color: #aab; cursor: pointer; }
+	#modes button.on { background: #2d7fe0; border-color: #2d7fe0; color: #fff; }
+	body[data-mode="skirmish"] #opts label:not(.in-sk), body[data-mode="host"] #opts label:not(.in-host),
+	body[data-mode="join"] #opts label:not(.in-join) { display: none; }
+	#loading.engine #modes, #loading.lobby #bar, #loading.lobby #barlabel, #loading.lobby #phase, #loading.lobby #detail { display: none; }
+	#lobby { display: flex; flex-direction: column; gap: 10px; align-items: center; min-width: min(560px, 90%); }
+	#lobby[hidden] { display: none; }
+	#lobby-status { font-size: 16px; }
+	#lobby-players { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+	#lobby-players li { background: #1c2230; border: 1px solid #334; border-radius: 12px; padding: 3px 12px; }
+	#lobby-players li.me { border-color: #2d7fe0; }
+	#lobby #lobby-start { background: #2d7fe0; border: 0; color: #fff; font-size: 16px; padding: 10px 34px; }
+	.hint { color: #889; font-size: 12px; max-width: 520px; }
 	button#play { font: 600 16px system-ui; padding: 10px 34px; border: 0; border-radius: 6px; background: #2d7fe0; color: #fff; cursor: pointer; }
 	button#play:disabled { background: #2a3140; color: #778; cursor: default; }
 	.err { color: #f77; }
@@ -33,10 +48,10 @@
 	footer { color: #778; font-size: 12px; margin-top: 12px; }
 </style>
 </head>
-<body data-gate="play">
+<body data-gate="play" data-mode="skirmish">
 <main>
 <h1>Beyond All Reason in the browser</h1>
-<p class="sub">Unofficial WebAssembly/WebGL2 port of the Recoil engine. Local skirmish against one of BAR's built-in Lua AIs. Needs a recent Chrome or Edge on a desktop GPU.</p>
+<p class="sub">Unofficial WebAssembly/WebGL2 port of the Recoil engine. Skirmish against one of BAR's built-in Lua AIs, or multiplayer with friends in their browsers. Needs a recent Chrome or Edge on a desktop GPU.</p>
 <div id="stage">
 	<canvas id="canvas" width="1280" height="720" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
 	<div id="loading">
@@ -45,13 +60,31 @@
 		<div id="barlabel"></div>
 		<div id="phase">starting</div>
 		<div id="detail">The game files (about 1.2 GB) are downloaded once and kept in this browser's storage. Music and assets for other game modes (about 0.8 GB) follow in the background once the game runs.</div>
+		<div id="modes">
+			<button type="button" data-mode="skirmish" class="on">Skirmish vs AI</button>
+			<button type="button" data-mode="host">Host multiplayer</button>
+			<button type="button" data-mode="join">Join multiplayer</button>
+		</div>
 		<div id="opts">
-			<label>Map<select id="o-map"><option>All That Glitters v2.2</option></select></label>
-			<label>Opponent<select id="o-ai"><option value="SimpleAI">SimpleAI (easy)</option><option value="SimpleDefenderAI">SimpleDefenderAI</option><option value="SimpleConstructorAI">SimpleConstructorAI</option></select></label>
-			<label>Graphics<select id="o-preset"><option value="">game default (low)</option><option>medium</option><option>high</option></select></label>
-			<label>Game speed<select id="o-speed"><option value="1">1×</option><option value="2">2×</option><option value="3">3×</option></select></label>
+			<label class="in-host in-join">Your name<input id="o-name" maxlength="20" placeholder="Player" spellcheck="false"></label>
+			<label class="in-join">Room code<input id="o-room" maxlength="16" placeholder="e.g. K3XQ9A" spellcheck="false"></label>
+			<label class="in-sk in-host">Map<select id="o-map"><option>All That Glitters v2.2</option></select></label>
+			<label class="in-sk">Opponent<select id="o-ai"><option value="SimpleAI">SimpleAI (easy)</option><option value="SimpleDefenderAI">SimpleDefenderAI</option><option value="SimpleConstructorAI">SimpleConstructorAI</option></select></label>
+			<label class="in-host">Teams<select id="o-teams"><option value="ffa">Free for all</option><option value="2">Two teams</option></select></label>
+			<label class="in-host">AI player<select id="o-mpai"><option value="none">none</option><option value="SimpleAI">SimpleAI (easy)</option><option value="SimpleDefenderAI">SimpleDefenderAI</option><option value="SimpleConstructorAI">SimpleConstructorAI</option></select></label>
+			<label class="in-sk in-host in-join">Graphics<select id="o-preset"><option value="">game default (low)</option><option>medium</option><option>high</option></select></label>
+			<label class="in-sk">Game speed<select id="o-speed"><option value="1">1×</option><option value="2">2×</option><option value="3">3×</option></select></label>
+			<label class="in-join">Watch only<select id="o-spec"><option value="0">no, play</option><option value="1">yes, spectate</option></select></label>
+			<label class="in-host in-join">Relay<input id="o-relay" size="30" placeholder="wss://…" spellcheck="false"></label>
 		</div>
 		<button id="play" type="button" disabled>Play</button>
+		<div id="lobby" hidden>
+			<div id="lobby-status"></div>
+			<div id="lobby-invite" hidden>Invite link <input id="lobby-link" readonly size="46"> <button type="button" id="lobby-copy">Copy</button></div>
+			<ul id="lobby-players"></ul>
+			<button id="lobby-start" type="button" hidden>Start game</button>
+			<div class="hint">Keep this tab in front while you play: browsers slow down background tabs, and a slow player holds up the game for everyone.</div>
+		</div>
 		<div id="coi"></div>
 	</div>
 </div>
@@ -73,29 +106,113 @@
 <footer>Controls: left-click selects, right-click orders, WASD / arrow keys and the mouse wheel move the camera. Beyond All Reason and the Recoil engine are GPL/free software by their authors; this port is not affiliated with them. Source: github.com/SgtMetz/RecoilEngine (branch wasm-port).</footer>
 </main>
 <script>
-// mirror the status fields into the loading overlay
+const $id = (id) => document.getElementById(id);
+const pageParams = new URLSearchParams(location.search);
+
+// ---- game mode: skirmish, host or join ----
+function setMode(mode) {
+	document.body.dataset.mode = mode;
+	for (const b of document.querySelectorAll("#modes button")) b.classList.toggle("on", b.dataset.mode === mode);
+	$id("play").textContent = mode === "host" ? "Create room" : mode === "join" ? "Join room" : "Play";
+}
+for (const b of document.querySelectorAll("#modes button")) b.addEventListener("click", () => setMode(b.dataset.mode));
+$id("o-name").value = localStorage.getItem("bar-web-name") || "";
+$id("o-relay").value = pageParams.get("relay") || localStorage.getItem("bar-web-relay") || window.BAR_RELAY || "";
+// an invite link (?mp=join&room=CODE) opens the page ready to join that room
+if (pageParams.get("mp") === "join") { setMode("join"); $id("o-room").value = pageParams.get("room") || ""; }
+
 window.applyPlayOptions = (params) => {
-	params.set("skirmish", "1");
-	params.set("map", document.getElementById("o-map").value);
-	params.set("ai", document.getElementById("o-ai").value);
-	const preset = document.getElementById("o-preset").value;
+	const mode = document.body.dataset.mode;
+	const preset = $id("o-preset").value;
 	if (preset) params.set("preset", preset);
-	params.set("livespeed", document.getElementById("o-speed").value);
 	params.set("testwidget", "live");
+	if (mode === "skirmish") {
+		params.delete("mp");
+		params.set("skirmish", "1");
+		params.set("map", $id("o-map").value);
+		params.set("ai", $id("o-ai").value);
+		params.set("livespeed", $id("o-speed").value);
+	} else {
+		const name = ($id("o-name").value.replace(/[^\w\-\[\]]/g, "").slice(0, 20)) || "Player" + Math.floor(Math.random() * 900 + 100);
+		localStorage.setItem("bar-web-name", name);
+		const relay = $id("o-relay").value.trim();
+		if (relay) { params.set("relay", relay); localStorage.setItem("bar-web-relay", relay); }
+		params.set("name", name);
+		params.set("mp", mode);
+		if (mode === "host") {
+			params.delete("room");
+			params.set("map", $id("o-map").value);
+			params.set("mpteams", $id("o-teams").value);
+			params.set("mpai", $id("o-mpai").value);
+		} else {
+			params.set("room", $id("o-room").value.replace(/[^A-Za-z0-9]/g, "").toUpperCase());
+			if ($id("o-spec").value === "1") params.set("spectate", "1");
+		}
+		$id("loading").classList.add("lobby");
+		$id("lobby").hidden = false;
+		$id("loading").querySelector("h2").textContent = mode === "host" ? "Your room" : "Joining";
+	}
 	// stage 2: the overlay stays up with the engine's load progress (render.js)
-	const ov = document.getElementById("loading");
+	const ov = $id("loading");
 	ov.classList.add("engine");
-	ov.querySelector("h2").textContent = "Starting the game";
-	document.getElementById("detail").textContent = "The first start compiles the game's shaders and takes a couple of minutes; later starts reuse them.";
+	if (mode === "skirmish") ov.querySelector("h2").textContent = "Starting the game";
+	$id("detail").textContent = "The first start compiles the game's shaders and takes a couple of minutes; later starts reuse them.";
 	setBar(0, "Starting the engine");
 	window.onEngineProgress = (f, step, done) => {
 		setBar(f, done ? "Ready" : step);
 		if (done) {
 			ov.classList.add("hidden");
-			document.getElementById("canvas").focus();
+			$id("canvas").focus();
 		}
 	};
 };
+
+// ---- multiplayer lobby (render.js calls this whenever the room changes) ----
+window.onLobbyUpdate = (s) => {
+	const status = $id("lobby-status");
+	if (s.status === "connecting") status.textContent = "Connecting to the relay…";
+	else if (s.status === "error") { status.innerHTML = ""; status.append(Object.assign(document.createElement("span"), { className: "err", textContent: "Could not join: " + (s.error || "unknown error") + ". Reload the page to try again." })); }
+	else if (s.status === "disconnected") { status.innerHTML = '<span class="err">Lost the connection to the relay. Reload the page to try again.</span>'; }
+	else if (s.status === "lobby-host") status.textContent = `Room ${s.room}: send the link to your friends, then start when everyone is here.`;
+	else if (s.status === "lobby") status.textContent = `In room ${s.room}: waiting for the host to start the game.`;
+	if (s.status === "starting") {
+		// the game is loading: back to the progress bar
+		$id("loading").classList.remove("lobby");
+		$id("lobby").hidden = true;
+		$id("loading").querySelector("h2").textContent = "Starting the game";
+		return;
+	}
+	$id("lobby-invite").hidden = !(s.isHost && s.room && s.status === "lobby-host");
+	$id("lobby-link").value = s.link || "";
+	$id("lobby-start").hidden = !(s.isHost && s.status === "lobby-host");
+	const ul = $id("lobby-players");
+	ul.innerHTML = "";
+	const roleText = { host: "host", player: "", spectator: "watching" };
+	const rank = (p) => (p.role === "host" ? 0 : p.role === "player" ? 1 : 2);
+	for (const p of [...(s.humans || [])].sort((a, b) => rank(a) - rank(b) || a.id - b.id)) {
+		const li = document.createElement("li");
+		li.textContent = p.name + (roleText[p.role] ? ` (${roleText[p.role]})` : "");
+		if (s.me && p.id === s.me.id) li.className = "me";
+		ul.append(li);
+	}
+	for (const n of s.native || []) ul.append(Object.assign(document.createElement("li"), { textContent: n + " (desktop)" }));
+};
+// check the multiplayer fields before render.js takes the Play click
+document.addEventListener("click", (e) => {
+	if (e.target.id !== "play") return;
+	const mode = document.body.dataset.mode;
+	let problem = "";
+	if (mode !== "skirmish" && !$id("o-relay").value.trim()) problem = "Multiplayer needs a relay address (wss://…).";
+	else if (mode === "join" && !$id("o-room").value.replace(/[^A-Za-z0-9]/g, "")) problem = "Enter the room code from the host's invite link.";
+	if (problem) {
+		e.stopImmediatePropagation();
+		e.preventDefault();
+		$id("coi").innerHTML = "";
+		$id("coi").append(Object.assign(document.createElement("span"), { className: "err", textContent: problem }));
+	}
+}, true);
+$id("lobby-start").addEventListener("click",() => { if (window.harness && harness.mpStart) harness.mpStart(); });
+$id("lobby-copy").addEventListener("click", () => { $id("lobby-link").select(); navigator.clipboard.writeText($id("lobby-link").value).catch(() => document.execCommand("copy")); });
 function setBar(f, label) {
 	document.getElementById("barfill").style.width = (Math.min(1, f) * 100).toFixed(1) + "%";
 	document.getElementById("barlabel").textContent = `${label}  ${Math.floor(Math.min(1, f) * 100)}%`;
@@ -121,6 +238,7 @@ if (/Firefox\//.test(navigator.userAgent)) document.getElementById("coi").insert
 if (!self.crossOriginIsolated) document.getElementById("coi").innerHTML = '<span class="err">Not cross-origin isolated: reloading to enable it…</span>';
 </script>
 <script src="coi-sw.js?register"></script>
+<script src="webnet.js"></script>
 <script src="render.js"></script>
 </body>
 </html>

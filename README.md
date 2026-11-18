@@ -8,6 +8,7 @@ An unofficial port of the [Recoil engine](https://github.com/beyond-all-reason/R
 - **Headless sim in the browser (B1):** a 15-minute BAR replay plays to the end in a Chromium tab with all 450/450 sync checksums matching the native build.
 - **Renderer (B2), in progress:** sky, textured terrain, features, units, build stages, BAR's LuaUI, reflections and post-processing render through a desktop-GL → WebGL2 shim. Desktop GLSL is cross-compiled with glslang → SPIR-V → SPIRV-Cross to ESSL 3.00.
 - **Audio, live play, static delivery build (B3–B5):** built and partly tested.
+- **Multiplayer:** browser players host and join rooms through a WebSocket relay (a Cloudflare Worker in [`web-harness/relay/`](web-harness/relay/)). Native engines can join through `web-harness/webnet-bridge.py`.
 
 The full write-up, with what broke and how it was fixed, is in [BAR-web-phase1-scoping.md](BAR-web-phase1-scoping.md) and [BAR-web-phase2.md](BAR-web-phase2.md).
 

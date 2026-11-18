@@ -75,6 +75,20 @@ Grabbing frames: `await harness.grab("name.png")` in the page console converts t
 
 Load takes about 55 s from cached OPFS content. With the pane hidden the main loop is timer-driven (about 50 ms per iteration); otherwise it uses requestAnimationFrame. What renders and what doesn't is listed in the B2 entry of `..\BAR-web-phase2.md`.
 
+### Multiplayer
+Browsers have no UDP, so the engine's game traffic goes over a WebSocket relay (`relay/`, a Cloudflare Worker; see its [README](relay/README.md)). With `RECOIL_WEB_NET=1` the engine (`rts/System/Net/WebNet.cpp`) writes its datagrams into a ring in shared wasm memory. `www/webnet-worker.js`, a dedicated worker so a background tab doesn't stall it, sends them to the relay and writes incoming ones into a second ring. The host's engine runs the normal game server, so this is the engine's own netcode, unchanged.
+
+| Parameter | Effect |
+|---|---|
+| `?mp=host` / `?mp=join` | Host a room or join one. Needs `&relay=wss://…` (or `window.BAR_RELAY`, which the delivery page sets in `config.js`), `&name=`, and `&room=CODE` to join. A host without `room` gets a random code. |
+| `?mpteams=ffa\|2`, `?mpai=<Lua AI>` | Host only: free-for-all or two teams, and an optional AI player. |
+| `?mpstart=N` | Host only: start as soon as N players are in the room (for tests). Otherwise call `harness.mpStart()`, or press Start game on the delivery page. |
+| `?spectate=1` | Join as a spectator. |
+
+The delivery page (`dist/index.html`) has Skirmish / Host / Join modes. A host gets an invite link (`?mp=join&room=CODE`) that opens the page ready to join. Native engines can join or host through `webnet-bridge.py` (cross-play; same engine commit only).
+
+Cursor lock: the first click into the game captures the mouse (Pointer Lock), like a desktop RTS window, so edge scrolling and middle-drag camera work without the cursor leaving the canvas. Esc releases it. `?mouselock=0` turns this off. Middle-click autoscroll is blocked page-wide.
+
 ### Shader cross-compilation diagnostics (B2)
 
 The optional glslang 16.6.0 / SPIRV-Cross vulkan-sdk-1.4.363.0 path compiles desktop GLSL through SPIR-V to GLSL ES 3.00. Unsupported shaders fall back to the text translator. Cross-compilation is enabled by default when the optional libraries are built in. WebGL2 LuaVAOs now support the basic indexed/array instanced drawing used by BAR scum, so its successful shader no longer reaches a nil VAO during initialization. Explicit mode 0 retains the text translator for comparisons.

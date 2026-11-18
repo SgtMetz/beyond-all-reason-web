@@ -76,10 +76,29 @@ harness.audio = { contexts: 0, states: [], peak: 0, rms: 0, resumedByGesture: fa
 	// keep receiving moves/releases while a button is held, also outside the canvas
 	cv.addEventListener("pointerdown", (e) => { try { cv.setPointerCapture(e.pointerId); } catch (_) {} });
 	cv.addEventListener("auxclick", stop);
-	// the engine's middle-drag camera switches SDL to relative mouse mode, which needs
-	// pointer lock; the engine runs in a worker, so lock here, inside the user gesture
-	cv.addEventListener("mousedown", (e) => { if (e.button === 1 && cv.requestPointerLock) cv.requestPointerLock(); });
-	window.addEventListener("mouseup", (e) => { if (e.button === 1 && document.pointerLockElement === cv) document.exitPointerLock(); });
+	// middle-click autoscroll starts from any element (and from the document while the
+	// pointer is locked), so block it page-wide too; capture phase, before anything else
+	document.addEventListener("mousedown", (e) => { if (e.button === 1) e.preventDefault(); }, { capture: true, passive: false });
+	document.addEventListener("auxclick", (e) => { if (e.button === 1) e.preventDefault(); }, { capture: true, passive: false });
+	// Game-style cursor lock (?mouselock=0 turns it off): the first click into the game
+	// captures the cursor, like a desktop RTS window. The engine then gets relative motion
+	// and keeps its own cursor inside the window (SDL clamps it), so edge scrolling and the
+	// middle-drag camera work without the cursor leaving the canvas. Esc releases it (the
+	// browser takes that Esc; press it again for the game). The engine runs in a worker,
+	// so the lock is requested here, inside the click.
+	const lockOn = params.get("mouselock") !== "0";
+	harness.mouseLock = { enabled: lockOn, locked: false, changes: 0 };
+	cv.addEventListener("mousedown", (e) => {
+		if (!lockOn || document.pointerLockElement === cv || !cv.requestPointerLock || harness.tEngine == null) return;
+		try {
+			const p = cv.requestPointerLock({ unadjustedMovement: false });
+			if (p && p.catch) p.catch(() => {});
+		} catch (_) {}
+	});
+	document.addEventListener("pointerlockchange", () => {
+		harness.mouseLock.locked = document.pointerLockElement === cv;
+		harness.mouseLock.changes++;
+	});
 	cv.addEventListener("wheel", (e) => e.preventDefault(), { passive: false });
 	cv.addEventListener("dragstart", (e) => e.preventDefault());
 	cv.addEventListener("selectstart", (e) => e.preventDefault());
@@ -349,6 +368,145 @@ async function writeSkirmishScript() {
 	return "/recoil/write/script.txt";
 }
 
+// ---- multiplayer -----------------------------------------------------------------
+// ?mp=host|join&room=CODE&name=NAME[&relay=wss://...]: every player's page joins the room
+// on the relay (webnet.js). The host's page waits in a lobby; when the host starts (the
+// delivery page's Start button, or ?mpstart=N once N players are in), it writes a script
+// with every player in the room, tells the others the host's virtual address, and every
+// page starts its engine with RECOIL_WEB_NET=1. A native engine joins through
+// webnet-bridge.py: as host (the bridge sends "start" with its own address) or as extra
+// players (the bridge announces their names; the host adds them to the script).
+// Host options: ?map=, ?mpteams=ffa|2 (default ffa), ?mpai=<Lua AI or none> (default none).
+// The relay: ?relay=, else window.BAR_RELAY (the delivery page's config.js, written by
+// build-dist.sh from $BAR_RELAY).
+const mp = { net: null, state: "off" };
+harness.mp = mp;
+
+function relayUrl() {
+	const r = (params.get("relay") || window.BAR_RELAY || "").trim();
+	if (!r) throw new Error("no multiplayer relay set: open the page with ?relay=wss://<relay host> (web-harness/relay)");
+	return r.replace(/^http/, "ws").replace(/\/+$/, "");
+}
+
+function lobbyUpdate(extra) {
+	const humans = mp.net ? mp.net.peers.filter((p) => p.role !== "bridge") : [];
+	const native = [];
+	for (const [id, names] of Object.entries(mp.nativePlayers || {}))
+		if (mp.net.peers.some((p) => p.id === +id)) native.push(...names);
+	const state = {
+		room: params.get("room"), me: mp.net && mp.net.welcome, isHost: params.get("mp") === "host",
+		peers: mp.net ? mp.net.peers : [], humans, native, status: mp.state,
+		link: location.origin + location.pathname + "?mp=join&room=" + encodeURIComponent(params.get("room") || "") +
+			(params.get("relay") && params.get("relay") !== window.BAR_RELAY ? "&relay=" + encodeURIComponent(params.get("relay")) : ""),
+		...extra,
+	};
+	if (window.onLobbyUpdate) window.onLobbyUpdate(state);
+	return state;
+}
+
+function scriptText(lines) { return lines.join(String.fromCharCode(10)) + String.fromCharCode(10); }
+
+async function writeScriptFile(text) {
+	const root = await navigator.storage.getDirectory();
+	const dir = await root.getDirectoryHandle("write");
+	const w = await (await dir.getFileHandle("script.txt", { create: true })).createWritable();
+	await w.write(text);
+	await w.close();
+	// the replay driver widget would cap the speed and quit the game
+	let wd = dir;
+	for (const d of ["LuaUI", "Widgets"]) wd = await wd.getDirectoryHandle(d);
+	await wd.removeEntry("m4_play.lua").catch(() => {});
+	return "/recoil/write/script.txt";
+}
+
+const TEAM_COLORS = ["0.1 0.4 1", "1 0.2 0.1", "0.1 0.8 0.2", "1 0.85 0.1", "0.7 0.2 0.9", "0.1 0.85 0.85", "1 0.5 0.1", "0.9 0.9 0.9"];
+
+// the host's script: every player in the room plays, bridged native players too
+function hostScript(names, spectators) {
+	const map = params.get("map") || "All That Glitters v2.2";
+	const teamsMode = params.get("mpteams") || "ffa";
+	const ai = params.get("mpai") && params.get("mpai") !== "none" ? params.get("mpai") : "";
+	const players = names.map((n) => ({ name: n }));
+	const nTeams = players.length + (ai ? 1 : 0);
+	const allyOf = (t) => teamsMode === "2" ? t % 2 : t;
+	const L = ["[game]", "{", `	gametype=${GAME_TYPE};`, `	mapname=${map};`, "	ishost=1;", "	hostip=;", "	hostport=8452;",
+		`	myplayername=${names[0]};`, "	startpostype=2;", `	numplayers=${players.length + spectators.length};`, `	numusers=${players.length + spectators.length};`];
+	players.forEach((p, i) => L.push(`	[player${i}]`, "	{", `		name=${p.name};`, "		spectator=0;", `		team=${i};`, "	}"));
+	spectators.forEach((n, j) => L.push(`	[player${players.length + j}]`, "	{", `		name=${n};`, "		spectator=1;", "		team=0;", "	}"));
+	const allies = new Set();
+	for (let t = 0; t < nTeams; t++) {
+		const isAI = ai && t === nTeams - 1;
+		L.push(`	[team${t}]`, "	{", `		allyteam=${allyOf(t)};`, `		teamleader=${isAI ? 0 : t};`, `		side=${t % 2 ? "Cortex" : "Armada"};`,
+			`		rgbcolor=${TEAM_COLORS[t % TEAM_COLORS.length]};`);
+		if (isAI) L.push(`		luaai=${ai};`);
+		L.push("	}");
+		allies.add(allyOf(t));
+	}
+	for (const a of [...allies].sort((x, y) => x - y)) L.push(`	[allyteam${a}]`, "	{", "		numallies=0;", "	}");
+	L.push("	[modoptions]", "	{", "		maxspeed=20;", "	}", "}");
+	return scriptText(L);
+}
+
+function clientScript(hostIP, hostPort, name) {
+	return scriptText(["[game]", "{", `	hostip=${hostIP};`, `	hostport=${hostPort};`, `	myplayername=${name};`, "	ishost=0;", "}"]);
+}
+
+// resolves with the script path once the game is starting
+async function runMultiplayer() {
+	const role = params.get("mp") === "host" ? "host" : (params.get("spectate") === "1" ? "spectator" : "player");
+	const name = (params.get("name") || "Player").replace(/[^\w\-\[\]]/g, "").slice(0, 20) || "Player";
+	if (!params.get("room")) params.set("room", Math.random().toString(36).slice(2, 8).toUpperCase());
+	mp.nativePlayers = {};
+	let welcome;
+	try {
+		mp.net = new WebNet({ relay: relayUrl(), room: params.get("room"), name, role });
+		mp.state = "connecting";
+		lobbyUpdate();
+		note(`multiplayer: joining room ${params.get("room")} on ${relayUrl()} as ${name} (${role})`);
+		welcome = await mp.net.connect();
+	} catch (e) {
+		mp.state = "error";
+		lobbyUpdate({ error: e.message });
+		throw e;
+	}
+	note(`multiplayer: in the room as ${welcome.ip}`);
+	mp.state = role === "host" ? "lobby-host" : "lobby";
+
+	return new Promise((resolve, reject) => {
+		const startAsHost = async () => {
+			if (mp.state === "starting") return;
+			const humans = mp.net.peers.filter((p) => p.role === "host" || p.role === "player").sort((a, b) => (a.role === "host" ? -1 : b.role === "host" ? 1 : a.id - b.id));
+			const specs = mp.net.peers.filter((p) => p.role === "spectator").map((p) => p.name);
+			const native = lobbyUpdate().native;
+			const names = [...humans.map((p) => p.name), ...native];
+			mp.state = "starting";
+			const text = hostScript(names, specs);
+			note("multiplayer: starting with " + names.join(", ") + (specs.length ? " (spectating: " + specs.join(", ") + ")" : ""));
+			mp.net.send({ type: "start", hostIP: welcome.ip, hostPort: 8452 });
+			lobbyUpdate();
+			resolve(await writeScriptFile(text));
+		};
+		harness.mpStart = startAsHost;
+		mp.net.on(async (msg) => {
+			if (msg.type === "native-players") { mp.nativePlayers[msg.from] = (msg.names || []).map(String); lobbyUpdate(); return; }
+			if (msg.type === "closed") { mp.state = mp.state === "starting" ? mp.state : "disconnected"; lobbyUpdate(); note("multiplayer: relay connection closed"); return; }
+			if (msg.type === "peers") {
+				lobbyUpdate();
+				const want = +(params.get("mpstart") || 0);
+				if (role === "host" && want > 0 && mp.state === "lobby-host" && mp.net.peers.filter((p) => p.role !== "bridge").length + lobbyUpdate().native.length >= want) startAsHost();
+				return;
+			}
+			if (msg.type === "start" && role !== "host" && mp.state !== "starting") {
+				mp.state = "starting";
+				note(`multiplayer: ${msg.fromName} started the game, host ${msg.hostIP}:${msg.hostPort}`);
+				lobbyUpdate();
+				resolve(await writeScriptFile(clientScript(msg.hostIP, msg.hostPort, name)));
+			}
+		});
+		lobbyUpdate();
+	});
+}
+
 // ---- ?glprofile=1: WebGL call profiler -------------------------------------------
 // The WebGL2 context lives in the engine's pthread worker. Emscripten starts its workers
 // from Module.mainScriptUrlOrBlob, so a blob that wraps every WebGL2RenderingContext
@@ -431,6 +589,8 @@ function startEngine(demo, engineSrc = "/engine/spring-web.js" + (params.get("no
 			...(params.get("glslanglimit") ? { RECOIL_WEB_GLSLANG_LIMIT: params.get("glslanglimit") } : {}),
 			// ?nogl4=1: don't advertise the emulated indirect/base-instance draws, so the engine reports no GL4
 			...(params.get("nogl4") === "1" ? { RECOIL_WEB_NO_GL4: "1" } : {}),
+			// multiplayer: UDP through the relay connection (webnet.js)
+			...(mp.net ? { RECOIL_WEB_NET: "1" } : {}),
 		},
 		print: (t) => line(t, false),
 		printErr: (t) => line(t, true),
@@ -444,6 +604,7 @@ function startEngine(demo, engineSrc = "/engine/spring-web.js" + (params.get("no
 		onAbort: (what) => { note("abort: " + what); $("s-phase").textContent = "aborted"; saveLog(); },
 	};
 	harness.tEngine = performance.now();
+	if (mp.net) mp.net.attach(window.Module);
 	const s = document.createElement("script");
 	s.src = engineSrc;
 	s.onerror = () => note("could not load /engine/spring-web.js");
@@ -485,7 +646,8 @@ window.addEventListener("unhandledrejection", (e) => note("unhandled rejection: 
 		await (await navigator.storage.getDirectory()).getDirectoryHandle("shadercache", { create: true });
 		await setReplaySpeed(+(params.get("speed") || 1));
 		if (params.get("testwidget") in TEST_WIDGETS) await addTestWidget();
-		const target = params.get("skirmish") === "1" ? await writeSkirmishScript() : c.demo;
+		const target = params.get("mp") ? await runMultiplayer()
+			: params.get("skirmish") === "1" ? await writeSkirmishScript() : c.demo;
 		if (params.get("glprofile") === "1") {
 			new BroadcastChannel("glprof").onmessage = (e) => line(String(e.data));
 			window.Module = {}; // installGlProfiler sets locateFile; startEngine merges it back
