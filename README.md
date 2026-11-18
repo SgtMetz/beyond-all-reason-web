@@ -22,4 +22,7 @@ The full write-up, with what broke and how it was fixed, is in [BAR-web-phase1-s
 ## Not included
 No game files. BAR content, maps and the test replay come from your own BAR install; `web-harness/pack-content.py` stages and bundles them locally.
 
+## License
+GPL-3.0-or-later; see [LICENSE](LICENSE). The engine fork keeps Recoil's own license (GPL-2.0-or-later).
+
 Beyond All Reason and Recoil are the work of their respective teams; this project is not affiliated with them.
